@@ -378,7 +378,15 @@ export default function App(){
       const addedRides=RIDES.filter(r=>added.has(r.id)&&!r.isTransport);
       let base=override||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(cfg.parks==="ioa")return r.park==="ioa";if(cfg.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
       const baseIds=new Set(base.map(r=>r.id));
-      addedRides.forEach(r=>{if(!baseIds.has(r.id))base.push(r);});
+      addedRides.forEach(r=>{
+        if(!baseIds.has(r.id)){
+          // Insert after the last ride in the same park for best time-block fit
+          let insertIdx=-1;
+          for(let i=base.length-1;i>=0;i--){if(base[i].park===r.park){insertIdx=i+1;break;}}
+          if(insertIdx>=0)base.splice(insertIdx,0,r);
+          else base.push(r);
+        }
+      });
       return base.filter(r=>!(dayNum===1?rem1:rem2).has(r.id));
     };
     setDay1Sched(buildDaySchedule({dayNum:1,hasExpress:cfg.hasExpress,hasEPA:cfg.hasEPA,liveWaits:live,parks:cfg.parks,cfg,overrideOrder:makeOrder(1,o1)}));
@@ -394,7 +402,30 @@ export default function App(){
   },[config,liveWaits,rideOrder1,rideOrder2,removedIds,addedIds]);
 
   const removeRide=(rideId,day)=>{setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});setExpandedId(null);};
-  const addRide=(rideId,day)=>{setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});};
+  const addRide=(rideId,day)=>{
+    const rideToAdd=RIDES.find(r=>r.id===rideId);
+    if(!rideToAdd)return;
+    const dayKey=day===1?"day1":"day2";
+    const removed=day===1?removedIds[1]:removedIds[2];
+    const added=day===1?addedIds[1]:addedIds[2];
+    // Build current order (same logic as moveRide)
+    let currentOrder=(day===1?rideOrder1:rideOrder2)||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+    const addedR=RIDES.filter(r=>added.has(r.id)&&!r.isTransport);
+    const baseIds=new Set(currentOrder.map(r=>r.id));
+    addedR.forEach(r=>{if(!baseIds.has(r.id))currentOrder=[...currentOrder,r];});
+    currentOrder=currentOrder.filter(r=>!removed.has(r.id));
+    // Insert new ride after the last ride in the same park
+    if(!currentOrder.some(r=>r.id===rideId)){
+      const newOrder=[...currentOrder];
+      let insertIdx=-1;
+      for(let i=newOrder.length-1;i>=0;i--){if(newOrder[i].park===rideToAdd.park){insertIdx=i+1;break;}}
+      if(insertIdx>=0)newOrder.splice(insertIdx,0,rideToAdd);
+      else newOrder.push(rideToAdd);
+      if(day===1)setRideOrder1(newOrder);else setRideOrder2(newOrder);
+    }
+    setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});
+    setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});
+  };
   const moveRide=(rideId,day,direction)=>{
     const dayKey=day===1?"day1":"day2";
     const removed=day===1?removedIds[1]:removedIds[2];
