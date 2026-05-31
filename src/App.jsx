@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 const DARSHI = { parks:"all", hasExpress:true, hasEPA:true, name:"Darshi", hotelBreak:true, breakStart:12*60, breakEnd:16*60 };
 const PARK = {
@@ -116,7 +116,7 @@ function buildDaySchedule({dayNum,hasExpress,hasEPA,liveWaits,parks,cfg,override
   const eveningStart=cfg.hotelBreak?cfg.breakEnd:null;
   const dayKey=dayNum===1?"day1":"day2";
   let scheduled=[];
-  const eligibleRides=overrideOrder?overrideOrder.filter(r=>!r.isTransport&&!r.optional):RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(parks==="ioa")return r.park==="ioa";if(parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+  const eligibleRides=overrideOrder?overrideOrder.filter(r=>!r.isTransport):RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(parks==="ioa")return r.park==="ioa";if(parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
   function buildBlock(rides,blockStart,blockEnd,startLand,startPark,crossingDone){
     let cur=blockStart,lastLand=startLand,lastPark=startPark;const items=[];
     if(!startLand&&rides.length>0){const fr=rides[0];const ew=ENTRANCE_WALK[fr.land]??10;if(ew>0){items.push({type:"walk",from:null,to:fr.land,startMins:cur,endMins:cur+ew,id:"walk-entrance-"+cur,park:fr.park,isEntrance:true});cur+=ew;}lastLand=fr.land;lastPark=fr.park;}
@@ -307,7 +307,6 @@ export default function App(){
   const[expandedId,setExpandedId]=useState(null);
   const[removedIds,setRemovedIds]=useState({1:new Set(),2:new Set()});
   const[addedIds,setAddedIds]=useState({1:new Set(),2:new Set()});
-  const dragItem=useRef(null);
 
   const fetchLive=useCallback(async(cfg)=>{
     if(!cfg)return;setLiveStatus("loading");
@@ -347,10 +346,27 @@ export default function App(){
           else if(n.includes("e.t. adventure"))id="et";
           else if(n.includes("trolls trollercoaster"))id="trollscoast";
           else if(n.includes("kang")&&n.includes("twirl"))id="kang";
-          if(id&&apiRide.wait_time!=null){results[id]={wait:apiRide.wait_time,isOpen:apiRide.is_open===false?false:true};}
+          if(id&&apiRide.wait_time!=null){
+            // Only store live data when the park is actually open (wait > 0)
+            // wait_time===0 means park is closed — fall back to historical estimates
+            if(apiRide.wait_time > 0){
+              results[id]={wait:apiRide.wait_time,isOpen:apiRide.is_open===false?false:true};
+            } else if(apiRide.is_open===false){
+              // Explicitly closed ride (maintenance etc) — mark it
+              results[id]={wait:0,isOpen:false};
+            }
+            // If wait_time===0 but not explicitly closed, skip — use historical
+          }
         });});}
       }));
-      setLiveWaits(results);setLiveStatus("ok");
+      // POST-PROCESS: if no ride has a positive wait, park is closed overnight
+      // In that case, clear results so historical estimates are used for planning
+      // Individual ride closures (maintenance) are only shown when other rides ARE open
+      const anyRideOpen = Object.values(results).some(r => r.wait > 0);
+      if (!anyRideOpen) {
+        for (const k of Object.keys(results)) delete results[k];
+      }
+      setLiveWaits(results);setLiveStatus(anyRideOpen?"ok":"idle");
     }catch{setLiveStatus("error");}
   },[]);
 
@@ -379,17 +395,21 @@ export default function App(){
 
   const removeRide=(rideId,day)=>{setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});setExpandedId(null);};
   const addRide=(rideId,day)=>{setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});};
-  const handleDragStart=(e,rideId,day)=>{dragItem.current={rideId,day};e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",rideId);};
-  const handleDragOver=e=>{e.preventDefault();e.dataTransfer.dropEffect="move";};
-  const handleDrop=(e,targetRideId,day)=>{
-    e.preventDefault();if(!dragItem.current||dragItem.current.rideId===targetRideId||dragItem.current.day!==day)return;
-    const dayKey=day===1?"day1":"day2";const removed=day===1?removedIds[1]:removedIds[2];
-    let cur=(day===1?rideOrder1:rideOrder2)||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99)).filter(r=>!removed.has(r.id));
-    const fi=cur.findIndex(r=>r.id===dragItem.current.rideId),ti=cur.findIndex(r=>r.id===targetRideId);
-    if(fi===-1||ti===-1)return;
-    const no=[...cur];const[mv]=no.splice(fi,1);no.splice(ti,0,mv);
+  const moveRide=(rideId,day,direction)=>{
+    const dayKey=day===1?"day1":"day2";
+    const removed=day===1?removedIds[1]:removedIds[2];
+    const added=day===1?addedIds[1]:addedIds[2];
+    let currentOrder=(day===1?rideOrder1:rideOrder2)||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+    const addedR=RIDES.filter(r=>added.has(r.id)&&!r.isTransport);
+    const baseIds=new Set(currentOrder.map(r=>r.id));
+    addedR.forEach(r=>{if(!baseIds.has(r.id))currentOrder=[...currentOrder,r];});
+    currentOrder=currentOrder.filter(r=>!removed.has(r.id));
+    const idx=currentOrder.findIndex(r=>r.id===rideId);
+    if(idx===-1)return;
+    if(direction===-1&&idx===0)return;
+    if(direction===1&&idx>=currentOrder.length-1)return;
+    const no=[...currentOrder];const[mv]=no.splice(idx,1);no.splice(idx+direction,0,mv);
     if(day===1)setRideOrder1(no);else setRideOrder2(no);
-    dragItem.current=null;
   };
 
   if(!config)return <SetupScreen onStart={handleStart}/>;
@@ -453,7 +473,7 @@ export default function App(){
     const showLive=hasLiveData&&!closed&&Math.abs(rideHour-getEasternHour())<=1;
     const showEst=!showLive&&!closed;
     return(
-      <div key={item.id} className="fade-up" draggable={!closed} onDragStart={e=>handleDragStart(e,ride.id,activeDay)} onDragOver={handleDragOver} onDrop={e=>handleDrop(e,ride.id,activeDay)} style={{marginBottom:9,animationDelay:Math.min(idx*0.02,0.3)+"s",opacity:closed?0.55:1,cursor:closed?"default":"grab"}}>
+      <div key={item.id} className="fade-up" style={{marginBottom:9,animationDelay:Math.min(idx*0.02,0.3)+"s",opacity:closed?0.55:1}}>
         <div style={{borderRadius:14,border:"1.5px solid #ede9dc",borderLeft:"5px solid "+(closed?"#F87171":lm?.color||pc),background:closed?"#FFF0F0":"#fff",transition:"border-color 0.15s"}}>
           <div onClick={()=>setExpandedId(isExp?null:item.id)} className="pop" style={{padding:"11px 13px",display:"flex",gap:10,alignItems:"flex-start",cursor:"pointer"}}>
             <div style={{width:40,minHeight:40,borderRadius:10,flexShrink:0,background:closed?"rgba(248,113,113,0.08)":al(wc,0.12),border:"1.5px solid "+(closed?"rgba(248,113,113,0.3)":al(wc,0.28)),display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
@@ -478,12 +498,15 @@ export default function App(){
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               {!closed&&<><div style={{fontSize:12,fontWeight:800,color:lm?.color||pc}}>{fmt12(item.startMins)}</div><div style={{fontSize:10,color:"#9b98a8",marginTop:1}}>{fmt12(item.endMins)}</div></>}
-              <div style={{fontSize:10,color:"#c5c2ba",marginTop:1}}>☰</div>
+              <div style={{display:"flex",gap:4,marginTop:4,justifyContent:"flex-end"}}>
+                <button onClick={e=>{e.stopPropagation();moveRide(ride.id,activeDay,-1);}} style={{width:28,height:28,borderRadius:8,border:"1.5px solid #e8e5de",background:"#fff",color:"#6b6880",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>▲</button>
+                <button onClick={e=>{e.stopPropagation();moveRide(ride.id,activeDay,1);}} style={{width:28,height:28,borderRadius:8,border:"1.5px solid #e8e5de",background:"#fff",color:"#6b6880",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>▼</button>
+                <button onClick={e=>{e.stopPropagation();removeRide(ride.id,activeDay);}} style={{width:28,height:28,borderRadius:8,border:"1.5px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.06)",color:"#F87171",fontSize:12,fontWeight:900,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>✕</button>
+              </div>
             </div>
           </div>
           {isExp&&<div className="fade-up" style={{borderTop:"1px solid #f0edd6",padding:"11px 13px"}}>
-            <div style={{fontSize:11,color:"#6b6880",lineHeight:1.65,marginBottom:10}}>💡 {ride.tip}</div>
-            <button onClick={()=>removeRide(ride.id,activeDay)} className="pop" style={{width:"100%",padding:"9px",borderRadius:10,border:"1px solid rgba(248,113,113,0.2)",background:"rgba(248,113,113,0.06)",color:"#F87171",fontSize:12,fontWeight:800,cursor:"pointer"}}>Remove from plan</button>
+            <div style={{fontSize:11,color:"#6b6880",lineHeight:1.65}}>💡 {ride.tip}</div>
           </div>}
         </div>
       </div>
