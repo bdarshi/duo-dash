@@ -112,47 +112,53 @@ function calcStats(scheduled){const rides=scheduled.filter(s=>s.type==="ride"&&!
 
 function buildDaySchedule({dayNum,hasExpress,hasEPA,liveWaits,parks,cfg,overrideOrder}){
   const startMins=hasEPA?8*60:9*60;
-  const morningEnd=cfg.hotelBreak?cfg.breakStart:14*60;
-  const eveningStart=cfg.hotelBreak?cfg.breakEnd:null;
   const dayKey=dayNum===1?"day1":"day2";
-  let scheduled=[];
   const eligibleRides=overrideOrder?[...overrideOrder]:RIDES.filter(r=>{if(r.optional)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(parks==="ioa")return r.park==="ioa";if(parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
-  function buildBlock(rides,blockStart,blockEnd,startLand,startPark){
-    let cur=blockStart,lastLand=startLand,lastPark=startPark;const items=[];
-    if(!startLand&&rides.length>0){const fr=rides[0];const ew=ENTRANCE_WALK[fr.land]??10;if(ew>0){items.push({type:"walk",from:null,to:fr.land,startMins:cur,endMins:cur+ew,id:"walk-entrance-"+cur,park:fr.park,isEntrance:true});cur+=ew;}lastLand=fr.land;lastPark=fr.park;}
-    for(const ride of rides){
-      if(cur>=blockEnd)break;
-      if(lastLand&&lastLand!==ride.land){const wm=circularWalk(lastLand,ride.land);items.push({type:"walk",from:lastLand,to:ride.land,startMins:cur,endMins:cur+wm,id:"walk-"+cur,park:ride.park});cur+=wm;}
-      else if(lastLand===ride.land&&items.length>0){items.push({type:"walk",from:lastLand,to:ride.land,startMins:cur,endMins:cur+10,id:"walk-within-"+cur,park:ride.park,withinLand:true});cur+=10;}
-      if(cur>=blockEnd)break;
-      const closed=isClosed(ride.id,liveWaits);const sh=cur/60;const wait=closed?0:getWait(ride.id,sh,hasExpress,liveWaits);const total=closed?0:wait+ride.dur+5;
-      if(!closed&&cur+total>blockEnd)continue;
-      items.push({type:"ride",ride,wait,land:ride.land,park:ride.park,startMins:cur,endMins:closed?cur:cur+total,id:"ride-"+ride.id,closed});
-      if(!closed)cur+=total;
-      // Use destLand if ride has one (e.g. Hogwarts Express drops you in other park)
-      const arrivalLand=ride.destLand||ride.land;
-      lastLand=arrivalLand;lastPark=LAND_META[arrivalLand]?.park||ride.park;
-    }
-    return{items,cur,lastLand,lastPark};
-  }
+  let scheduled=[];
+  let cur=startMins,lastLand=null,lastPark=null,hasRidden=false;
+  let breakDone=false,paradeDone=false;
+  const PARADE=19*60,CINE=21*60;
   const firstRide=eligibleRides[0];
-  if(hasEPA&&firstRide)scheduled.push({type:"epa",id:"epa-start",park:firstRide.park,land:firstRide.land,startMins:startMins,label:firstRide.park==="ioa"?"Islands of Adventure":"Universal Studios Florida",sub:dayNum===1?"Early Park Admission - Hogsmeade first":"Early Park Admission - Jurassic Park first"});
-  const morning=buildBlock(eligibleRides,startMins,morningEnd,null,null);
-  scheduled=[...scheduled,...morning.items];
+  if(hasEPA&&firstRide)scheduled.push({type:"epa",id:"epa-start",park:firstRide.park,land:firstRide.land,startMins,label:firstRide.park==="ioa"?"Islands of Adventure":"Universal Studios Florida",sub:dayNum===1?"Early Park Admission - Hogsmeade first":"Early Park Admission - Jurassic Park first"});
+  for(const ride of eligibleRides){
+    // Hotel break: insert when we pass breakStart
+    if(cfg.hotelBreak&&!breakDone&&cur>=cfg.breakStart){
+      if(lastLand){const ew=ENTRANCE_WALK[lastLand]??10;scheduled.push({type:"walk",from:lastLand,to:"Exit",startMins:cur,endMins:cur+ew,id:"walk-exit-"+cur,isExit:true,park:lastPark||"ioa"});}
+      scheduled.push({type:"break",id:"hotel-break",startMins:cfg.breakStart,endMins:cfg.breakEnd,label:"\u{1F3E8} Hotel Break",sub:"Back at the park at "+fmt12(cfg.breakEnd)});
+      cur=cfg.breakEnd;lastLand=null;lastPark=null;breakDone=true;
+    }
+    // Parade: insert when we pass parade time
+    if(cfg.hotelBreak&&breakDone&&!paradeDone&&cur>=PARADE-15){
+      scheduled.push({type:"event",id:"parade",startMins:PARADE,emoji:"\u{1F3AC}",label:"Universal Mega Movie Parade",sub:"Studios lagoon - Get there 20 min early - Passholders have exclusive viewing area",color:"#F87171"});
+      cur=PARADE+60;paradeDone=true;
+    }
+    // Entrance walk (first ride or re-entering after break)
+    if(!lastLand){
+      const ew=ENTRANCE_WALK[ride.land]??10;
+      if(ew>0){scheduled.push({type:"walk",from:null,to:ride.land,startMins:cur,endMins:cur+ew,id:"walk-entrance-"+cur,park:ride.park,isEntrance:true});cur+=ew;}
+      lastLand=ride.land;lastPark=ride.park;
+    }
+    // Walk between or within lands
+    if(lastLand&&lastLand!==ride.land){const wm=circularWalk(lastLand,ride.land);scheduled.push({type:"walk",from:lastLand,to:ride.land,startMins:cur,endMins:cur+wm,id:"walk-"+cur,park:ride.park});cur+=wm;}
+    else if(lastLand===ride.land&&hasRidden){scheduled.push({type:"walk",from:lastLand,to:ride.land,startMins:cur,endMins:cur+10,id:"walk-within-"+cur,park:ride.park,withinLand:true});cur+=10;}
+    // Schedule the ride — always, no skipping
+    const closed=isClosed(ride.id,liveWaits);const sh=cur/60;const wait=closed?0:getWait(ride.id,sh,hasExpress,liveWaits);const total=closed?0:wait+ride.dur+5;
+    scheduled.push({type:"ride",ride,wait,land:ride.land,park:ride.park,startMins:cur,endMins:closed?cur:cur+total,id:"ride-"+ride.id,closed});
+    if(!closed){cur+=total;hasRidden=true;}
+    const arrivalLand=ride.destLand||ride.land;
+    lastLand=arrivalLand;lastPark=LAND_META[arrivalLand]?.park||ride.park;
+  }
+  // End-of-day cards
   if(cfg.hotelBreak){
-    if(morning.lastLand){const ew=ENTRANCE_WALK[morning.lastLand]??10;scheduled.push({type:"walk",from:morning.lastLand,to:"Exit",startMins:morning.cur,endMins:morning.cur+ew,id:"walk-exit-morning",isExit:true,park:morning.lastPark||"ioa"});}
-    scheduled.push({type:"break",id:"hotel-break",startMins:cfg.breakStart,endMins:cfg.breakEnd,label:"🏨 Hotel Break",sub:"Back at the park at "+fmt12(cfg.breakEnd)});
-    const PARADE=19*60,CINE=21*60;
-    const eveningRides=eligibleRides.filter(r=>!morning.items.some(s=>s.type==="ride"&&s.ride?.id===r.id&&!s.closed));
-    const evening=buildBlock(eveningRides,eveningStart,PARADE-15,null,null);
-    scheduled=[...scheduled,...evening.items];
-    scheduled.push({type:"event",id:"parade",startMins:PARADE,emoji:"🎬",label:"Universal Mega Movie Parade",sub:"Studios lagoon - Get there 20 min early - Passholders have exclusive viewing area",color:"#F87171"});
-    const postRides=eveningRides.filter(r=>![...morning.items,...evening.items].some(s=>s.type==="ride"&&s.ride?.id===r.id&&!s.closed));
-    if(postRides.length>0){const pp=buildBlock(postRides,PARADE+60,CINE-15,evening.lastLand,evening.lastPark);scheduled=[...scheduled,...pp.items];}
-    scheduled.push({type:"event",id:"cinesational",startMins:CINE,emoji:"🎆",label:"Cinesational: A Symphonic Spectacular",sub:"Studios fountains - Pyrotechnics - Harry Potter, Jaws & Mummy soundtracks",color:"#818CF8"});
+    if(!breakDone){
+      if(lastLand){const ew=ENTRANCE_WALK[lastLand]??10;scheduled.push({type:"walk",from:lastLand,to:"Exit",startMins:cur,endMins:cur+ew,id:"walk-exit-"+cur,isExit:true,park:lastPark||"ioa"});}
+      scheduled.push({type:"break",id:"hotel-break",startMins:cfg.breakStart,endMins:cfg.breakEnd,label:"\u{1F3E8} Hotel Break",sub:"Back at the park at "+fmt12(cfg.breakEnd)});
+    }
+    if(!paradeDone)scheduled.push({type:"event",id:"parade",startMins:PARADE,emoji:"\u{1F3AC}",label:"Universal Mega Movie Parade",sub:"Studios lagoon - Get there 20 min early - Passholders have exclusive viewing area",color:"#F87171"});
+    scheduled.push({type:"event",id:"cinesational",startMins:CINE,emoji:"\u{1F386}",label:"Cinesational: A Symphonic Spectacular",sub:"Studios fountains - Pyrotechnics - Harry Potter, Jaws & Mummy soundtracks",color:"#818CF8"});
   } else {
-    if(morning.lastLand){const ew=ENTRANCE_WALK[morning.lastLand]??10;scheduled.push({type:"walk",from:morning.lastLand,to:"Exit",startMins:morning.cur,endMins:morning.cur+ew,id:"walk-exit",isExit:true,park:morning.lastPark||"ioa"});}
-    scheduled.push({type:"wrap",id:"wrap",startMins:morning.cur+(ENTRANCE_WALK[morning.lastLand]??10),label:"That's a wrap!",sub:"Hotel time - kids have earned it. Done by "+fmt12(morning.cur)+"."});
+    if(lastLand){const ew=ENTRANCE_WALK[lastLand]??10;scheduled.push({type:"walk",from:lastLand,to:"Exit",startMins:cur,endMins:cur+ew,id:"walk-exit",isExit:true,park:lastPark||"ioa"});}
+    scheduled.push({type:"wrap",id:"wrap",startMins:cur+(ENTRANCE_WALK[lastLand]??10),label:"That's a wrap!",sub:"Done by "+fmt12(cur)+"."});
   }
   const doneIds=new Set(scheduled.filter(s=>s.type==="ride"&&!s.closed).map(s=>s.ride.id));
   return{scheduled,bonus:RIDES.filter(r=>!doneIds.has(r.id)&&(parks==="all"||r.park===parks))};
