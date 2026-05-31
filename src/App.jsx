@@ -401,46 +401,42 @@ export default function App(){
     return()=>clearInterval(interval);
   },[config,liveWaits,rideOrder1,rideOrder2,removedIds,addedIds]);
 
-  const removeRide=(rideId,day)=>{setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});setExpandedId(null);};
+  const removeRide=(rideId,day)=>{
+    const setOrder=day===1?setRideOrder1:setRideOrder2;
+    setOrder(prev=>prev?prev.filter(r=>r.id!==rideId):prev);
+    setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});
+    setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});
+    setExpandedId(null);
+  };
   const addRide=(rideId,day)=>{
     const rideToAdd=RIDES.find(r=>r.id===rideId);
     if(!rideToAdd)return;
     const dayKey=day===1?"day1":"day2";
-    const removed=day===1?removedIds[1]:removedIds[2];
-    const added=day===1?addedIds[1]:addedIds[2];
-    // Build current order (same logic as moveRide)
-    let currentOrder=(day===1?rideOrder1:rideOrder2)||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
-    const addedR=RIDES.filter(r=>added.has(r.id)&&!r.isTransport);
-    const baseIds=new Set(currentOrder.map(r=>r.id));
-    addedR.forEach(r=>{if(!baseIds.has(r.id))currentOrder=[...currentOrder,r];});
-    currentOrder=currentOrder.filter(r=>!removed.has(r.id));
-    // Insert new ride after the last ride in the same park
-    if(!currentOrder.some(r=>r.id===rideId)){
-      const newOrder=[...currentOrder];
+    const setOrder=day===1?setRideOrder1:setRideOrder2;
+    setOrder(prev=>{
+      let order=prev?[...prev]:RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+      if(order.some(r=>r.id===rideId))return order;
       let insertIdx=-1;
-      for(let i=newOrder.length-1;i>=0;i--){if(newOrder[i].park===rideToAdd.park){insertIdx=i+1;break;}}
-      if(insertIdx>=0)newOrder.splice(insertIdx,0,rideToAdd);
-      else newOrder.push(rideToAdd);
-      if(day===1)setRideOrder1(newOrder);else setRideOrder2(newOrder);
-    }
+      for(let i=order.length-1;i>=0;i--){if(order[i].park===rideToAdd.park){insertIdx=i+1;break;}}
+      if(insertIdx>=0)order.splice(insertIdx,0,rideToAdd);
+      else order.push(rideToAdd);
+      return order;
+    });
     setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});
     setRemovedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].delete(rideId);return n;});
   };
   const moveRide=(rideId,day,direction)=>{
     const dayKey=day===1?"day1":"day2";
-    const removed=day===1?removedIds[1]:removedIds[2];
-    const added=day===1?addedIds[1]:addedIds[2];
-    let currentOrder=(day===1?rideOrder1:rideOrder2)||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
-    const addedR=RIDES.filter(r=>added.has(r.id)&&!r.isTransport);
-    const baseIds=new Set(currentOrder.map(r=>r.id));
-    addedR.forEach(r=>{if(!baseIds.has(r.id))currentOrder=[...currentOrder,r];});
-    currentOrder=currentOrder.filter(r=>!removed.has(r.id));
-    const idx=currentOrder.findIndex(r=>r.id===rideId);
-    if(idx===-1)return;
-    if(direction===-1&&idx===0)return;
-    if(direction===1&&idx>=currentOrder.length-1)return;
-    const no=[...currentOrder];const[mv]=no.splice(idx,1);no.splice(idx+direction,0,mv);
-    if(day===1)setRideOrder1(no);else setRideOrder2(no);
+    const setOrder=day===1?setRideOrder1:setRideOrder2;
+    setOrder(prev=>{
+      let order=prev?[...prev]:RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+      const idx=order.findIndex(r=>r.id===rideId);
+      if(idx===-1)return order;
+      if(direction===-1&&idx===0)return order;
+      if(direction===1&&idx>=order.length-1)return order;
+      const[mv]=order.splice(idx,1);order.splice(idx+direction,0,mv);
+      return order;
+    });
   };
 
   if(!config)return <SetupScreen onStart={handleStart}/>;
