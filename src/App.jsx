@@ -47,7 +47,7 @@ const RIDES=[
   {id:"trolley",   name:"High in the Sky Seuss Trolley Train",   land:"Seuss Landing",  park:"ioa",    minH:36,express:true, single:false,dur:5, day1:3, day2:null,tip:"Elevated scenic ride. Short waits all day."},
   {id:"cathat",    name:"The Cat in the Hat",                    land:"Seuss Landing",  park:"ioa",    minH:36,express:true, single:false,dur:4, day1:4, day2:null,tip:"Classic family dark ride. Low waits all day."},
   {id:"onefish",   name:"One Fish, Two Fish, Red Fish, Blue Fish",land:"Seuss Landing",  park:"ioa",    minH:0, express:false,single:false,dur:3, day1:5, day2:null,tip:"Kids water spinner. Try to dodge the jets — you won't."},
-  {id:"hogex_ioa", name:"Hogwarts Express (Hogsmeade)",          land:"Hogsmeade",      park:"ioa",    minH:0, express:false,single:false,dur:18,day1:6, day2:null,isTransport:true,tip:"P2P ticket required. Completely different from the return trip."},
+  {id:"hogex_ioa", name:"Hogwarts Express (Hogsmeade)",          land:"Hogsmeade",      park:"ioa",    minH:0, express:false,single:false,dur:18,day1:6, day2:null,destLand:"Diagon Alley",tip:"P2P ticket required. Rides to King's Cross. You arrive in Diagon Alley (Studios)."},
   {id:"dudley",    name:"Dudley Do-Right's Ripsaw Falls",        land:"Toon Lagoon",    park:"ioa",    minH:44,express:true, single:false,dur:6, day1:null,day2:null,optional:true,tip:"Very wet. Play by ear based on heat."},
   {id:"veloci",    name:"Jurassic World VelociCoaster",          land:"Jurassic Park",  park:"ioa",    minH:51,express:true, single:true, dur:4, day1:null,day2:1, tip:"Best coaster in the resort. Single rider cuts wait significantly."},
   {id:"ptero",     name:"Pteranodon Flyers",                     land:"Jurassic Park",  park:"ioa",    minH:36,express:false,single:false,dur:3, day1:null,day2:2, maxH:56,tip:"Kids 36-56 inches only. Adults must ride WITH a child. No Express."},
@@ -69,7 +69,7 @@ const RIDES=[
   {id:"mummy",     name:"Revenge of the Mummy",                  land:"New York",       park:"studios",minH:48,express:true, single:true, dur:3, day1:null,day2:10,tip:"Underrated indoor coaster. Express + single rider both work."},
   {id:"transformers",name:"Transformers: The Ride 3D",           land:"Production Ctrl",park:"studios",minH:40,express:true, single:true, dur:5, day1:null,day2:null,optional:true,tip:"Solid motion sim. Single rider available."},
   {id:"kang",      name:"Kang & Kodos' Twirl 'n' Hurl",         land:"Springfield",    park:"studios",minH:0, express:false,single:false,dur:3, day1:null,day2:null,optional:true,tip:"Simple spinner. Low waits."},
-  {id:"hogex_st",  name:"Hogwarts Express (King's Cross)",       land:"Diagon Alley",   park:"studios",minH:0, express:false,single:false,dur:18,day1:null,day2:null,isTransport:true,tip:"P2P ticket required. Completely different from the Hogsmeade departure."},
+  {id:"hogex_st",  name:"Hogwarts Express (King's Cross)",       land:"Diagon Alley",   park:"studios",minH:0, express:false,single:false,dur:18,day1:null,day2:null,destLand:"Hogsmeade",tip:"P2P ticket required. Rides to Hogsmeade. You arrive in IOA."},
 ];
 const FOOD={
   "Hogsmeade":      {sitdown:{name:"Three Broomsticks",         item:"Great Feast platter",         emoji:"🍖"},snack:{name:"Honeydukes",             item:"Pumpkin Pasties",           emoji:"🥧"},drink:{name:"Butterbeer Cart",     item:"Frozen Butterbeer",              emoji:"🍺"}},
@@ -116,47 +116,46 @@ function buildDaySchedule({dayNum,hasExpress,hasEPA,liveWaits,parks,cfg,override
   const eveningStart=cfg.hotelBreak?cfg.breakEnd:null;
   const dayKey=dayNum===1?"day1":"day2";
   let scheduled=[];
-  const eligibleRides=overrideOrder?overrideOrder.filter(r=>!r.isTransport):RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(parks==="ioa")return r.park==="ioa";if(parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
-  function buildBlock(rides,blockStart,blockEnd,startLand,startPark,crossingDone){
+  const eligibleRides=overrideOrder?[...overrideOrder]:RIDES.filter(r=>{if(r.optional)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(parks==="ioa")return r.park==="ioa";if(parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+  function buildBlock(rides,blockStart,blockEnd,startLand,startPark){
     let cur=blockStart,lastLand=startLand,lastPark=startPark;const items=[];
     if(!startLand&&rides.length>0){const fr=rides[0];const ew=ENTRANCE_WALK[fr.land]??10;if(ew>0){items.push({type:"walk",from:null,to:fr.land,startMins:cur,endMins:cur+ew,id:"walk-entrance-"+cur,park:fr.park,isEntrance:true});cur+=ew;}lastLand=fr.land;lastPark=fr.park;}
     for(const ride of rides){
       if(cur>=blockEnd)break;
-      if(lastPark==="ioa"&&ride.park==="studios"&&!crossingDone&&parks==="all"){
-        if(lastLand!=="Hogsmeade"){const wt=circularWalk(lastLand,"Hogsmeade");items.push({type:"walk",from:lastLand,to:"Hogsmeade",startMins:cur,endMins:cur+wt,id:"walk-hogs-"+cur,park:"ioa"});cur+=wt;}
-        items.push({type:"crossing",startMins:cur,endMins:cur+25,id:"crossing",note:"Board at Hogsmeade to King's Cross / Diagon Alley. P2P ticket required."});cur+=25;crossingDone=true;lastLand="Diagon Alley";lastPark="studios";
-      }
       if(lastLand&&lastLand!==ride.land){const wm=circularWalk(lastLand,ride.land);items.push({type:"walk",from:lastLand,to:ride.land,startMins:cur,endMins:cur+wm,id:"walk-"+cur,park:ride.park});cur+=wm;}
       else if(lastLand===ride.land&&items.length>0){items.push({type:"walk",from:lastLand,to:ride.land,startMins:cur,endMins:cur+10,id:"walk-within-"+cur,park:ride.park,withinLand:true});cur+=10;}
       if(cur>=blockEnd)break;
       const closed=isClosed(ride.id,liveWaits);const sh=cur/60;const wait=closed?0:getWait(ride.id,sh,hasExpress,liveWaits);const total=closed?0:wait+ride.dur+5;
       if(!closed&&cur+total>blockEnd)continue;
       items.push({type:"ride",ride,wait,land:ride.land,park:ride.park,startMins:cur,endMins:closed?cur:cur+total,id:"ride-"+ride.id,closed});
-      if(!closed)cur+=total;lastLand=ride.land;lastPark=ride.park;
+      if(!closed)cur+=total;
+      // Use destLand if ride has one (e.g. Hogwarts Express drops you in other park)
+      const arrivalLand=ride.destLand||ride.land;
+      lastLand=arrivalLand;lastPark=LAND_META[arrivalLand]?.park||ride.park;
     }
-    return{items,cur,lastLand,lastPark,crossingDone};
+    return{items,cur,lastLand,lastPark};
   }
   const firstRide=eligibleRides[0];
   if(hasEPA&&firstRide)scheduled.push({type:"epa",id:"epa-start",park:firstRide.park,land:firstRide.land,startMins:startMins,label:firstRide.park==="ioa"?"Islands of Adventure":"Universal Studios Florida",sub:dayNum===1?"Early Park Admission - Hogsmeade first":"Early Park Admission - Jurassic Park first"});
-  const morning=buildBlock(eligibleRides,startMins,morningEnd,null,null,false);
+  const morning=buildBlock(eligibleRides,startMins,morningEnd,null,null);
   scheduled=[...scheduled,...morning.items];
   if(cfg.hotelBreak){
     if(morning.lastLand){const ew=ENTRANCE_WALK[morning.lastLand]??10;scheduled.push({type:"walk",from:morning.lastLand,to:"Exit",startMins:morning.cur,endMins:morning.cur+ew,id:"walk-exit-morning",isExit:true,park:morning.lastPark||"ioa"});}
     scheduled.push({type:"break",id:"hotel-break",startMins:cfg.breakStart,endMins:cfg.breakEnd,label:"🏨 Hotel Break",sub:"Back at the park at "+fmt12(cfg.breakEnd)});
     const PARADE=19*60,CINE=21*60;
     const eveningRides=eligibleRides.filter(r=>!morning.items.some(s=>s.type==="ride"&&s.ride?.id===r.id&&!s.closed));
-    const evening=buildBlock(eveningRides,eveningStart,PARADE-15,null,null,morning.crossingDone);
+    const evening=buildBlock(eveningRides,eveningStart,PARADE-15,null,null);
     scheduled=[...scheduled,...evening.items];
     scheduled.push({type:"event",id:"parade",startMins:PARADE,emoji:"🎬",label:"Universal Mega Movie Parade",sub:"Studios lagoon - Get there 20 min early - Passholders have exclusive viewing area",color:"#F87171"});
     const postRides=eveningRides.filter(r=>![...morning.items,...evening.items].some(s=>s.type==="ride"&&s.ride?.id===r.id&&!s.closed));
-    if(postRides.length>0){const pp=buildBlock(postRides,PARADE+60,CINE-15,evening.lastLand,evening.lastPark,evening.crossingDone);scheduled=[...scheduled,...pp.items];}
+    if(postRides.length>0){const pp=buildBlock(postRides,PARADE+60,CINE-15,evening.lastLand,evening.lastPark);scheduled=[...scheduled,...pp.items];}
     scheduled.push({type:"event",id:"cinesational",startMins:CINE,emoji:"🎆",label:"Cinesational: A Symphonic Spectacular",sub:"Studios fountains - Pyrotechnics - Harry Potter, Jaws & Mummy soundtracks",color:"#818CF8"});
   } else {
     if(morning.lastLand){const ew=ENTRANCE_WALK[morning.lastLand]??10;scheduled.push({type:"walk",from:morning.lastLand,to:"Exit",startMins:morning.cur,endMins:morning.cur+ew,id:"walk-exit",isExit:true,park:morning.lastPark||"ioa"});}
     scheduled.push({type:"wrap",id:"wrap",startMins:morning.cur+(ENTRANCE_WALK[morning.lastLand]??10),label:"That's a wrap!",sub:"Hotel time - kids have earned it. Done by "+fmt12(morning.cur)+"."});
   }
   const doneIds=new Set(scheduled.filter(s=>s.type==="ride"&&!s.closed).map(s=>s.ride.id));
-  return{scheduled,bonus:RIDES.filter(r=>!r.isTransport&&!doneIds.has(r.id)&&(parks==="all"||r.park===parks))};
+  return{scheduled,bonus:RIDES.filter(r=>!doneIds.has(r.id)&&(parks==="all"||r.park===parks))};
 }
 
 const CSS=`
@@ -375,8 +374,8 @@ export default function App(){
     const makeOrder=(dayNum,override)=>{
       const dayKey=dayNum===1?"day1":"day2";
       const added=dayNum===1?add1:add2;
-      const addedRides=RIDES.filter(r=>added.has(r.id)&&!r.isTransport);
-      let base=override||RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(cfg.parks==="ioa")return r.park==="ioa";if(cfg.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+      const addedRides=RIDES.filter(r=>added.has(r.id));
+      let base=override||RIDES.filter(r=>{if(r.optional)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(cfg.parks==="ioa")return r.park==="ioa";if(cfg.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
       const baseIds=new Set(base.map(r=>r.id));
       addedRides.forEach(r=>{
         if(!baseIds.has(r.id)){
@@ -414,12 +413,9 @@ export default function App(){
     const dayKey=day===1?"day1":"day2";
     const setOrder=day===1?setRideOrder1:setRideOrder2;
     setOrder(prev=>{
-      let order=prev?[...prev]:RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
-      if(order.some(r=>r.id===rideId))return order;
-      let insertIdx=-1;
-      for(let i=order.length-1;i>=0;i--){if(order[i].park===rideToAdd.park){insertIdx=i+1;break;}}
-      if(insertIdx>=0)order.splice(insertIdx,0,rideToAdd);
-      else order.push(rideToAdd);
+      let order=prev?[...prev]:RIDES.filter(r=>{if(r.optional)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+      order=order.filter(r=>r.id!==rideId);
+      order.push(rideToAdd);
       return order;
     });
     setAddedIds(p=>{const n={...p,[day]:new Set(p[day])};n[day].add(rideId);return n;});
@@ -429,7 +425,7 @@ export default function App(){
     const dayKey=day===1?"day1":"day2";
     const setOrder=day===1?setRideOrder1:setRideOrder2;
     setOrder(prev=>{
-      let order=prev?[...prev]:RIDES.filter(r=>{if(r.optional||r.isTransport)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
+      let order=prev?[...prev]:RIDES.filter(r=>{if(r.optional)return false;if(r[dayKey]===null||r[dayKey]===undefined)return false;if(config.parks==="ioa")return r.park==="ioa";if(config.parks==="studios")return r.park==="studios";return true;}).sort((a,b)=>(a[dayKey]||99)-(b[dayKey]||99));
       const idx=order.findIndex(r=>r.id===rideId);
       if(idx===-1)return order;
       if(direction===-1&&idx===0)return order;
@@ -456,15 +452,6 @@ export default function App(){
       <div key={item.id} className="fade-up" style={{marginBottom:12,borderRadius:14,background:(PARK[item.park]?.color||"#34D399")+"20",border:"2px solid "+(PARK[item.park]?.color||"#34D399"),padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",gap:10,alignItems:"center"}}><div style={{fontSize:24}}>{PARK[item.park]?.emoji}</div><div><div style={{fontSize:13,fontWeight:900,color:"#1a1a2e"}}>{item.label}</div><div style={{fontSize:10,color:al(PARK[item.park]?.color||"#34D399",0.8),marginTop:2}}>{item.sub}</div></div></div>
         <div style={{fontSize:13,fontWeight:900,color:PARK[item.park]?.color||"#34D399"}}>{fmt12(item.startMins)}</div>
-      </div>
-    );
-    if(item.type==="crossing")return(
-      <div key={item.id} className="fade-up" style={{marginBottom:10,borderRadius:14,background:"#FFF8E7",border:"2px solid #FBBF24",padding:"13px 14px"}}>
-        <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <div style={{fontSize:26}}>🚂</div>
-          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:900,color:"#d97706",marginBottom:2}}>Hogwarts Express - Park Crossing</div><div style={{fontSize:10,color:"#b45309",lineHeight:1.5}}>{item.note}</div></div>
-          <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:11,color:"#d97706",fontWeight:800}}>{fmt12(item.startMins)}</div><div style={{fontSize:9,color:"#9b98a8"}}>~25 min</div></div>
-        </div>
       </div>
     );
     if(item.type==="break")return(
@@ -572,11 +559,11 @@ export default function App(){
           {scheduled.map((item,idx)=>renderItem(item,idx))}
           {bonus.length>0&&<div style={{marginTop:16}}>
             <div style={{padding:"12px 14px",borderRadius:"12px 12px 0 0",background:"#fff",border:"1.5px solid #e8e5de",borderBottom:"none",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><div style={{fontSize:12,fontWeight:900,color:"#1a1a2e"}}>Add-on rides</div><div style={{fontSize:10,color:"#9b98a8",marginTop:2}}>{bonus.filter(r=>!r.isTransport).length} available · tap to add</div></div>
+              <div><div style={{fontSize:12,fontWeight:900,color:"#1a1a2e"}}>Add-on rides</div><div style={{fontSize:10,color:"#9b98a8",marginTop:2}}>{bonus.length} available · tap to add</div></div>
               <div style={{fontSize:16,color:"#c5c2ba"}}>+</div>
             </div>
             <div style={{borderRadius:"0 0 12px 12px",border:"1.5px solid #e8e5de",borderTop:"none",overflow:"hidden"}}>
-              {bonus.filter(r=>!r.isTransport).sort((a,b)=>getHistoricalWait(a.id,getEasternHour(),config.hasExpress)-getHistoricalWait(b.id,getEasternHour(),config.hasExpress)).map((ride,i)=>{
+              {bonus.sort((a,b)=>getHistoricalWait(a.id,getEasternHour(),config.hasExpress)-getHistoricalWait(b.id,getEasternHour(),config.hasExpress)).map((ride,i)=>{
                 const liveEntry=liveWaits[ride.id];const closed=liveEntry?.isOpen===false;
                 const wait=closed?0:((liveEntry?.wait??liveEntry)??(getHistoricalWait(ride.id,getEasternHour(),config.hasExpress)));
                 const wc=closed?"#94A3B8":waitColor(wait);const lm=LAND_META[ride.land];
@@ -626,7 +613,7 @@ export default function App(){
           <div style={{fontSize:10,color:"#9b98a8",marginBottom:12,lineHeight:1.5}}>{liveStatus==="ok"?"Live wait times · "+liveCount+" rides · updates every 5 min.":"Historical wait times. Live data unavailable right now."}</div>
           {["ioa","studios"].filter(p=>config.parks==="all"||config.parks===p).map(p=><div key={p} style={{marginBottom:18}}>
             <div style={{fontSize:11,fontWeight:900,letterSpacing:"0.08em",textTransform:"uppercase",color:PARK[p].color,marginBottom:8,display:"flex",alignItems:"center",gap:6}}><div style={{width:3,height:12,borderRadius:2,background:PARK[p].color}}/>{PARK[p].emoji} {PARK[p].name}</div>
-            {RIDES.filter(r=>r.park===p&&!r.isTransport).sort((a,b)=>{
+            {RIDES.filter(r=>r.park===p).sort((a,b)=>{
               const cA=liveWaits[a.id]?.isOpen===false,cB=liveWaits[b.id]?.isOpen===false;if(cA&&!cB)return 1;if(!cA&&cB)return-1;
               return getHistoricalWait(a.id,getEasternHour(),config.hasExpress)-getHistoricalWait(b.id,getEasternHour(),config.hasExpress);
             }).map(ride=>{
